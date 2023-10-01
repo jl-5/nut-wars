@@ -1,0 +1,15 @@
+[package]
+name = "interactive-drawing"
+version = "0.1.0"
+authors = ["Joseph C. Osborn <joseph.osborn@pomona.edu>"]
+edition = "2021"
+
+[dependencies]
+env_logger = "0.10"
+image = "0.24.7"
+log = "0.4"
+pollster = "0.3.0"
+wgpu = "0.17"
+winit = "0.28"
+imageproc = "0.23"
+rusttype = "0.9.2"
