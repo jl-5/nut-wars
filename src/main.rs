@@ -110,7 +110,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .await
         .expect("Failed to create device");
 
-    let (tex_47, mut img_47) = load_texture("content/47.png", Some("47 image"), &device, &queue).expect("Couldn't load 47 img");
+    let (tex_47, mut img_47) = load_texture("content/king.png", Some("47 image"), &device, &queue).expect("Couldn't load 47 img");
     let view_47 = tex_47.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler_47 = device.create_sampler(&wgpu::SamplerDescriptor::default());
     // The swapchain is how we obtain images from the surface we're drawing onto.
@@ -237,24 +237,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         // or scale it up and down
         screen_size: [1024.0, 768.0],
     };
-    let sprites:Vec<GPUSprite> = vec![
-        GPUSprite {
-            screen_region: [32.0, 32.0, 64.0, 64.0],
-            sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-        },
-        GPUSprite {
-            screen_region: [32.0, 128.0, 64.0, 64.0],
-            sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-        },
-        GPUSprite {
-            screen_region: [128.0, 32.0, 64.0, 64.0],
-            sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-        },
-        GPUSprite {
-            screen_region: [128.0, 128.0, 64.0, 64.0],
-            sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-        },
-    ];
 
     let camera = GPUCamera {
         screen_pos: [0.0, 0.0],
@@ -312,11 +294,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             }
         ],
     });
-    // draw two triangles per sprite, and sprites-many sprites.
-    // this uses instanced drawing, but it would also be okay
-    // to draw 6 * sprites.len() vertices and use modular arithmetic
-    // to figure out which sprite we're drawing, instead of the instance index.
-    rpass.draw(0..6, 0..(sprites.len() as u32));
+
+
 
     let tex_47_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
@@ -358,6 +337,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         multiview: None,
     });
 
+
+
     let mut input = input::Input::default();
     let mut color = image::Rgba([255,0,0,255]);
     let mut brush_size = 10_i32;
@@ -394,6 +375,48 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 window.request_redraw();
             }
             Event::RedrawRequested(_) => {
+                // If the window system is telling us to redraw, let's get our next swapchain image
+                let frame = surface
+                .get_current_texture()
+                .expect("Failed to acquire next swap chain texture");
+                // And set up a texture view onto it, since the GPU needs a way to interpret those
+                // image bytes for writing.
+                let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+                // From the queue we obtain a command encoder that lets us issue GPU commands
+                let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                {
+                // Now we begin a render pass.  The descriptor tells WGPU that
+                // we want to draw onto our swapchain texture view (that's where the colors will go)
+                // and that there's no depth buffer or stencil buffer.
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            // When loading this texture for writing, the GPU should clear
+                            // out all pixels to a lovely green color
+                            load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+                            // The results of drawing should always be stored to persistent memory
+                            store: true,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                });
+
+                rpass.set_pipeline(&render_pipeline);
+                rpass.set_bind_group(0, &sprite_bind_group, &[]);
+                rpass.set_bind_group(1, &tex_47_bind_group, &[]);
+                // draw two triangles per sprite, and sprites-many sprites.
+                // this uses instanced drawing, but it would also be okay
+                // to draw 6 * sprites.len() vertices and use modular arithmetic
+                // to figure out which sprite we're drawing, instead of the instance index.
+
+                rpass.draw(0..6, 0..(sprites.len() as u32));
+            }
                 // TODO: move sprites, maybe scroll camera
                 // Then send the data to the GPU!
                 queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
