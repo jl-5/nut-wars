@@ -354,15 +354,44 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             }
             Event::RedrawRequested(_) => {
                 // TODO: move sprites, maybe scroll camera
+
+                let mut step = 0;
+
                 if input.is_key_down(winit::event::VirtualKeyCode::Left) {
-                    sprites[0].screen_region[0] -= 1.0;
+                    sprites[0].screen_region[0] -= 2.0;
+
+                    if sprites[0].sheet_region[0] == (16.0/32.0) {
+                        sprites[0].sheet_region[0]= (0.0);
+                    }
+                    else if sprites[0].sheet_region[0] == (0.0) {
+                        sprites[0].sheet_region[0]= (16.0/32.0);
+                    }
+
                 }
 
                 if input.is_key_down(winit::event::VirtualKeyCode::Right) {
-                    sprites[0].screen_region[0] += 1.0;
+                    sprites[0].screen_region[0] += 2.0;
+
+                    if sprites[0].sheet_region[0] == (16.0/32.0) {
+                        sprites[0].sheet_region[0]= (0.0);
+                    }
+                    else if sprites[0].sheet_region[0] == (0.0) {
+                        sprites[0].sheet_region[0]= (16.0/32.0);
+                    }
+                    // if step==2 {
+                    //     if sprites[0].sheet_region[0] == (16.0/32.0) {
+                    //         sprites[0].sheet_region[0]= (0.0);
+                    //     }
+                    //     else if sprites[0].sheet_region[0] == (0.0) {
+                    //         sprites[0].sheet_region[0]= (16.0/32.0);
+                    //     }
+                    //     step=0;
+                    // }
+                    // else if (step==1) | (step==0) {
+                    //     step+=1;
+                    // }
+
                 }
-
-
 
                 // Then send the data to the GPU!
                 queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
