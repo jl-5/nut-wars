@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, f32::consts::E};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -276,23 +276,19 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         screen_size: [1024.0, 768.0],
     };
     let mut sprites = vec![
+        // SQUIRREL
     GPUSprite {
         screen_region: [32.0, 32.0, 64.0, 64.0],
         sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-    }/* ,
-    GPUSprite {
-        screen_region: [32.0, 128.0, 64.0, 64.0],
-        sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-    },
-    GPUSprite {
-        screen_region: [128.0, 32.0, 64.0, 64.0],
-        sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-    },
-    GPUSprite {
-        screen_region: [128.0, 128.0, 64.0, 64.0],
-        sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-    },
-    */];
+    }
+    ];
+
+    // frames will be a series of frames 
+    let mut squirrel_sheet_positions = vec![
+        [[0.0, 0.5, 0.5, 0.5]],
+        // TODO: populate this with the sprite sheet positions for the squirrel frames
+
+    ];
 
     let buffer_camera = device.create_buffer(&wgpu::BufferDescriptor{
         label: None,
