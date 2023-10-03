@@ -84,24 +84,20 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     // Create the logical device and command queue.  A logical device is like a connection to a GPU, and
     // we'll be issuing instructions to the GPU over the command queue.
     let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                // We don't need to ask for any optional GPU features for our simple example
-                features: wgpu::Features::empty(),
-                // Make sure we use very broadly compatible limits for our driver,
-                // and also use the texture resolution limits from the adapter.
-                // This is important for supporting images as big as our swapchain.
-                limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
-            },
-            None,
-        )
-        // request_device is also an async function, so we need to wait for the result.
-        .await
-        .expect("Failed to create device");
+    .request_device(
+        &wgpu::DeviceDescriptor {
+            label: None,
+            features: wgpu::Features::empty(),
+            // Bump up the limits to require the availability of storage buffers.
+            limits: wgpu::Limits::downlevel_defaults()
+                .using_resolution(adapter.limits()),
+        },
+        None,
+    )
+    .await
+    .expect("Failed to create device");
 
-    let (tex_47, mut img_47) = load_texture("content/47.png", Some("47 image"), &device, &queue).expect("Couldn't load 47 img");
+    let (tex_47, mut img_47) = load_texture("content/king.png", Some("47 image"), &device, &queue).expect("Couldn't load 47 img");
     let view_47 = tex_47.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler_47 = device.create_sampler(&wgpu::SamplerDescriptor::default());
     // The swapchain is how we obtain images from the surface we're drawing onto.
@@ -170,14 +166,51 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             },
         ],
     });
-    // Now we'll create our pipeline layout, specifying the shape of the execution environment (the bind group)
+    let sprite_bind_group_layout =
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            // The camera binding
+            wgpu::BindGroupLayoutEntry {
+                // This matches the binding in the shader
+                binding: 0,
+                // Available in vertex shader
+                visibility: wgpu::ShaderStages::VERTEX,
+                // It's a buffer
+                ty: wgpu::BindingType::Buffer {
+                    // Specifically, a uniform buffer
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None
+                },
+                // No count, not a buffer array binding
+                count: None,
+            },
+            // The sprite buffer binding
+            wgpu::BindGroupLayoutEntry {
+                // This matches the binding in the shader
+                binding: 1,
+                // Available in vertex shader
+                visibility: wgpu::ShaderStages::VERTEX,
+                // It's a buffer
+                ty: wgpu::BindingType::Buffer {
+                    // Specifically, a storage buffer
+                    ty: wgpu::BufferBindingType::Storage{read_only:true},
+                    has_dynamic_offset: false,
+                    min_binding_size: None
+                },
+                // No count, not a buffer array binding
+                count: None,
+            },
+        ],
+    });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[&texture_bind_group_layout],
+        bind_group_layouts: &[&sprite_bind_group_layout, &texture_bind_group_layout],
         push_constant_ranges: &[],
     });
 
-    let tex_47_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &texture_bind_group_layout,
         entries: &[
@@ -222,9 +255,76 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut brush_size = 10_i32;
     let (img_47_w, img_47_h) = img_47.dimensions();
 
-    let mut img_data = img_47.as_flat_samples_mut();
-    let mut blend = imageproc::drawing::Blend(
-        img_data.as_view_mut::<image::Rgba<u8>>().unwrap(),);
+    #[repr(C)]
+    #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+    struct GPUSprite {
+        screen_region: [f32;4],
+        // Textures with a bunch of sprites are often called "sprite sheets"
+        sheet_region: [f32;4]
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+    struct GPUCamera {
+        screen_pos: [f32;2],
+        screen_size: [f32;2]
+    }
+    let camera = GPUCamera {
+        screen_pos: [0.0, 0.0],
+        // Consider using config.width and config.height instead,
+        // it's up to you whether you want the window size to change what's visible in the game
+        // or scale it up and down
+        screen_size: [1024.0, 768.0],
+    };
+    let mut sprites = vec![
+    GPUSprite {
+        screen_region: [32.0, 32.0, 64.0, 64.0],
+        sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
+    },
+    GPUSprite {
+        screen_region: [32.0, 128.0, 64.0, 64.0],
+        sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
+    },
+    GPUSprite {
+        screen_region: [128.0, 32.0, 64.0, 64.0],
+        sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
+    },
+    GPUSprite {
+        screen_region: [128.0, 128.0, 64.0, 64.0],
+        sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
+    },
+    ];
+
+    let buffer_camera = device.create_buffer(&wgpu::BufferDescriptor{
+        label: None,
+        size: bytemuck::bytes_of(&camera).len() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false
+    });
+    let buffer_sprite = device.create_buffer(&wgpu::BufferDescriptor{
+        label: None,
+        size: bytemuck::cast_slice::<_,u8>(&sprites).len() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false
+    });
+
+    queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
+    queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
+
+    let sprite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &sprite_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer_camera.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buffer_sprite.as_entire_binding()
+            }
+        ],
+    });
+
 
     // Now our setup is all done and we can kick off the windowing event loop.
     // This closure is a "move closure" that claims ownership over variables used within its scope.
@@ -253,151 +353,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 window.request_redraw();
             }
             Event::RedrawRequested(_) => {
-                // (1)
-                // Your turn: Use the number keys 1-3 to change the color...
-                if input.is_key_down(winit::event::VirtualKeyCode::Key1) {
-                    color = image::Rgba([0,255,0,255]);
-                }
-                if input.is_key_down(winit::event::VirtualKeyCode::Key2) {
-                    color = image::Rgba([0,0,255,255]);
-                }
-                if input.is_key_down(winit::event::VirtualKeyCode::Key3) {
-                    color = image::Rgba([255,255,0,255]);
-                }
-                // And use the numbers 9 and 0 to change the brush size:
-                if input.is_key_down(winit::event::VirtualKeyCode::Key9) {
-                    brush_size = (brush_size-1).clamp(1, 50);
-                } else if input.is_key_down(winit::event::VirtualKeyCode::Key0) {
-                    brush_size = (brush_size+1).clamp(1, 50);
-                }
-                // part two of lab
-                // I DONT KNOW HOW TO SEE TRANSPARENCY DIFF
-                if input.is_key_down(winit::event::VirtualKeyCode::C) {
-                    // let new_alpha = 50;
-                    // let pixel1 = image::Rgba([255, 0, 0, new_alpha]);
-                    // imageproc::drawing::Blend(
-                    //     pixel1);
-                    color[3] = 50;
-                }
-                // Here's how we'll splatter paint on the 47 image: (shape1)
-                if input.is_mouse_down(winit::event::MouseButton::Left) {
-                    let mouse_pos = input.mouse_pos();
-                    // (2)
-                    let (mouse_x_norm, mouse_y_norm) = ((mouse_pos.x / config.width as f64),
-                                                        (mouse_pos.y / config.height as f64));
-                    imageproc::drawing::draw_filled_circle_mut(
-                        &mut img_47,
-                        ((mouse_x_norm * (img_47_w as f64)) as i32,
-                        (mouse_y_norm * (img_47_h as f64)) as i32),
-                        brush_size,
-                        color);
-                    // We've modified the image in memory---now to update the texture!
-                    // This queues up a texture copy for later, copying the image data.
-                    queue.write_texture(
-                        tex_47.as_image_copy(),
-                        &img_47,
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * img_47_w),
-                            rows_per_image: Some(img_47_h),
-                        },
-                        wgpu::Extent3d {
-                            width:img_47_w,
-                            height:img_47_h,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
-                // (shape2)
-                if input.is_mouse_up(winit::event::MouseButton::Left) & !input.is_key_down(winit::event::VirtualKeyCode::A) & !input.is_key_down(winit::event::VirtualKeyCode::B){
-                    let mouse_pos = input.mouse_pos();
-                    let (mouse_x_norm, mouse_y_norm) = ((mouse_pos.x / config.width as f64),
-                                                        (mouse_pos.y / config.height as f64));
-                    let rect = Rect::at((mouse_x_norm * (img_47_w as f64)) as i32, (mouse_y_norm * (img_47_h as f64)) as i32).of_size(10, 50);
-                    imageproc::drawing::draw_hollow_rect_mut(
-                        &mut img_47,
-                        rect,
-                        color);
-                    queue.write_texture(
-                        tex_47.as_image_copy(),
-                        &img_47,
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * img_47_w),
-                            rows_per_image: Some(img_47_h),
-                        },
-                        wgpu::Extent3d {
-                            width:img_47_w,
-                            height:img_47_h,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
-                // (shape3)
-                if input.is_key_down(winit::event::VirtualKeyCode::A) {
-                    let mouse_pos = input.mouse_pos();
-                    let (mouse_x_norm, mouse_y_norm) = ((mouse_pos.x / config.width as f64),
-                                                        (mouse_pos.y / config.height as f64));
-                    imageproc::drawing::draw_cross_mut(
-                            &mut img_47, 
-                            color, 
-                            (mouse_x_norm * (img_47_w as f64)) as i32,
-                            (mouse_y_norm * (img_47_h as f64)) as i32);
-                    queue.write_texture(
-                        tex_47.as_image_copy(),
-                        &img_47,
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * img_47_w),
-                            rows_per_image: Some(img_47_h),
-                        },
-                        wgpu::Extent3d {
-                            width:img_47_w,
-                            height:img_47_h,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
-                // (shape4)
-                if input.is_key_down(winit::event::VirtualKeyCode::B) {
-                    let mouse_pos = input.mouse_pos();
-                    let (mouse_x_norm, mouse_y_norm) = ((mouse_pos.x / config.width as f64),
-                                                        (mouse_pos.y / config.height as f64));
-                    // Load a font.
-                    let font = Vec::from(include_bytes!("../src/ac-thermes.ttf") as &[u8]);
-                    // /Users/Aniku/cs181g/5-interactive-drawing/src/ac-thermes.ttf
-                    let font = Font::try_from_vec(font).unwrap();
-
-                    let font_size = 40.0;
-                    let scale = Scale {
-                        x: 50.0,
-                        y: 50.0,
-                    };
-                    imageproc::drawing::draw_text_mut(
-                            &mut img_47,
-                            color,
-                            (mouse_x_norm * (img_47_w as f64)) as i32, 
-                            (mouse_y_norm * (img_47_h as f64)) as i32, 
-                            scale, 
-                            &font, 
-                            &"HI!"
-                            );
-                    queue.write_texture(
-                        tex_47.as_image_copy(),
-                        &img_47,
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * img_47_w),
-                            rows_per_image: Some(img_47_h),
-                        },
-                        wgpu::Extent3d {
-                            width:img_47_w,
-                            height:img_47_h,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
+                // TODO: move sprites, maybe scroll camera
+                // Then send the data to the GPU!
+                queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
+                queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
+                // ...all the drawing stuff goes here...
+                window.request_redraw();
+                // Leave now_keys alone, but copy over all changed keys
                 input.next_frame();
+
                 // If the window system is telling us to redraw, let's get our next swapchain image
                 let frame = surface
                     .get_current_texture()
@@ -415,51 +379,39 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     // we want to draw onto our swapchain texture view (that's where the colors will go)
                     // and that there's no depth buffer or stencil buffer.
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: None,
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                // When loading this texture for writing, the GPU should clear
-                                // out all pixels to a lovely green color
-                                load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
-                                // The results of drawing should always be stored to persistent memory
-                                store: true,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                    });
-                    // And this is where the magic happens: we tell the driver to set up the GPU
-                    // with our drawing program (our render pipeline)...
-                    // rpass.set_pipeline(&render_pipeline);
-                    // Then execute that program to draw vertices 0, 1, and 2 for a single instance
-                    // (instancing lets the GPU draw the same vertices over and over again, but with
-                    // different auxiliary instance data for each trip through the batch of vertices).
-                    // If we had a vertex buffer bound, this would fetch vertex data from that buffer,
-                    // but for this example we aren't doing that.
-                    // rpass.draw(0..3, 0..1);
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: true,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                });
                     rpass.set_pipeline(&render_pipeline);
-                    // Attach the bind group for group 0
-                    rpass.set_bind_group(0, &tex_47_bind_group, &[]);
-                    // Now draw two triangles!
-                    rpass.draw(0..6, 0..1);
-                }
+                    rpass.set_bind_group(0, &sprite_bind_group, &[]);
+                    rpass.set_bind_group(1, &texture_bind_group, &[]);
+                    // draw two triangles per sprite, and sprites-many sprites.
+                    // this uses instanced drawing, but it would also be okay
+                    // to draw 6 * sprites.len() vertices and use modular arithmetic
+                    // to figure out which sprite we're drawing, instead of the instance index.
+                    rpass.draw(0..6, 0..(sprites.len() as u32));
+            }
+
                 // Once the commands have been scheduled, we send them over to the GPU via the queue.
                 queue.submit(Some(encoder.finish()));
                 // Then we wait for the commands to finish and tell the windowing system to
                 // present the swapchain image.
                 frame.present();
-                // (3) doesnt draw without this
-                // And we have to tell the window to redraw!
                 window.request_redraw();
             }
-            // If we're supposed to close the window, tell the event loop we're all done
+
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => *control_flow = ControlFlow::Exit,
-            // Ignore every other event for now.
-            // _ => {}
             // WindowEvent->KeyboardInput: Keyboard input!
             Event::WindowEvent {
                 // Note this deeply nested pattern match
@@ -469,7 +421,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 },
                 ..
             } => {
-                input.handle_key_event(key_ev);
+            input.handle_key_event(key_ev);
             },
             Event::WindowEvent {
                 event: WindowEvent::MouseInput { state, button, .. },
@@ -483,7 +435,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             } => {
                 input.handle_mouse_move(position);
             }
-            _ => (),
+            _ => {}
         }
     });
 }
