@@ -279,7 +279,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     GPUSprite {
         screen_region: [32.0, 32.0, 64.0, 64.0],
         sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
-    },
+    }/* ,
     GPUSprite {
         screen_region: [32.0, 128.0, 64.0, 64.0],
         sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
@@ -292,7 +292,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         screen_region: [128.0, 128.0, 64.0, 64.0],
         sheet_region: [16.0/32.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
     },
-    ];
+    */];
 
     let buffer_camera = device.create_buffer(&wgpu::BufferDescriptor{
         label: None,
@@ -354,6 +354,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             }
             Event::RedrawRequested(_) => {
                 // TODO: move sprites, maybe scroll camera
+                if input.is_key_down(winit::event::VirtualKeyCode::Left) {
+                    sprites[0].screen_region[0] -= 1.0;
+                }
+
+                if input.is_key_down(winit::event::VirtualKeyCode::Right) {
+                    sprites[0].screen_region[0] += 1.0;
+                }
+
+
+
                 // Then send the data to the GPU!
                 queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
                 queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
