@@ -14,3 +14,15 @@ winit = "0.28"
 imageproc = "0.23"
 rusttype = "0.9.2"
 bytemuck = { version = "1.14.0", features = ["derive"] }
+
+[profile.dev.package.backtrace]
+opt-level = 3
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.adler]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+

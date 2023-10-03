@@ -1,11 +1,13 @@
+// NUT WARS MAIN
+
 use std::borrow::Cow;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
-use imageproc::rect::Rect;
-use rusttype::{Font, Scale};
+//use imageproc::rect::Rect;
+//use rusttype::{Font, Scale};
 mod input;
 
 #[repr(C)]
@@ -23,14 +25,13 @@ struct GPUCamera {
     screen_size: [f32;2]
 }
 
-// AsRef means we can take as parameters anything that cheaply converts into a Path,
-// for example an &str.
+// THE ERROR IS WITH THE LOAD TEXTURE RETURN TYPE!!!
 fn load_texture(
     path: impl AsRef<std::path::Path>,
     label: Option<&str>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> Result<(wgpu::Texture, image::RgbaImage), image::ImageError> {
+) -> Result<wgpu::Texture,image::ImageError> {
     // This ? operator will return the error if there is one, unwrapping the result otherwise.
     let img = image::open(path.as_ref())?.to_rgba8();
     let (width, height) = img.dimensions();
@@ -59,41 +60,20 @@ fn load_texture(
         },
         size,
     );
-    Ok((texture,img))
+    Ok((texture))
 }
 
-// In WGPU, we define an async function whose operation can be suspended and resumed.
-// This is because on web, we can't take over the main event loop and must leave it to
-// the browser.  On desktop, we'll just be running this function to completion.
 async fn run(event_loop: EventLoop<()>, window: Window) {
     let size = window.inner_size();
-
-    // An Instance is an instance of the graphics API.  It's the context in which other
-    // WGPU values and operations take place, and there can be only one.
-    // Its implementation of the Default trait automatically selects a driver backend.
-    let instance = wgpu::Instance::default();
-
-    // From the OS window (or web canvas) the graphics API can obtain a surface onto which
-    // we can draw.  This operation is unsafe (it depends on the window not outliving the surface)
-    // and it could fail (if the window can't provide a rendering destination).
-    // The unsafe {} block allows us to call unsafe functions, and the unwrap will abort the program
-    // if the operation fails.
+    let instance = wgpu::Instance::default();// An Instance is an instance of the graphics API. 
     let surface = unsafe { instance.create_surface(&window) }.unwrap();
-
-    // Next, we need to get a graphics adapter from the instance---this represents a physical
-    // graphics card (GPU) or compute device.  Here we ask for a GPU that will be able to draw to the
-    // surface we just obtained.
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
-            // Request an adapter which can render to our surface
             compatible_surface: Some(&surface),
         })
-        // This operation can take some time, so we await the result. We can only await like this
-        // in an async function.
         .await
-        // And it can fail, so we panic with an error message if we can't get a GPU.
         .expect("Failed to find an appropriate adapter");
 
         let (device, queue) = adapter
@@ -110,30 +90,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .await
         .expect("Failed to create device");
 
-    let (tex_sprite_sheet, mut sprite_sheet) = load_texture("content/king.png", Some("sprite sheet"), &device, &queue).expect("Couldn't load sprite sheet");
-    let view = tex_sprite_sheet.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
-    // The swapchain is how we obtain images from the surface we're drawing onto.
-    // This is so we can draw onto one image while a different one is being presented
-    // to the user on-screen.
-    let swapchain_capabilities = surface.get_capabilities(&adapter);
-    // We'll just use the first supported format, we don't have any reason here to use
-    // one format or another.
-    let swapchain_format = swapchain_capabilities.formats[0];
-
-    // Our surface config lets us set up our surface for drawing with the device
-    // we're actually using.  It's mutable in case the window's size changes later on.
-    let mut config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: swapchain_format,
-        width: size.width,
-        height: size.height,
-        present_mode: wgpu::PresentMode::Fifo,
-        alpha_mode: swapchain_capabilities.alpha_modes[0],
-        view_formats: vec![],
-    };
-    surface.configure(&device, &config);
-
     // Load the shaders from disk.  Remember, shader programs are things we compile for
     // our GPU so that it can compute vertices and colorize fragments.
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -141,49 +97,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         // Cow is a "copy on write" wrapper that abstracts over owned or borrowed memory.
         // Here we just need to use it since wgpu wants "some text" to compile a shader from.
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
-    });
-
-    let texture_bind_group_layout =
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: None,
-        // This bind group's first entry is for the texture and the second is for the sampler.
-        entries: &[
-            // The texture binding
-            wgpu::BindGroupLayoutEntry {
-                // This matches the binding number in the shader
-                binding: 0,
-                // Only available in the fragment shader
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                // It's a texture binding
-                ty: wgpu::BindingType::Texture {
-                    // We can use it with float samplers
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    // It's being used as a 2D texture
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    // This is not a multisampled texture
-                    multisampled: false,
-                },
-                // This is not an array texture, so it has None for count
-                count: None,
-            },
-            // The sampler binding
-            wgpu::BindGroupLayoutEntry {
-                // This matches the binding number in the shader
-                binding: 1,
-                // Only available in the fragment shader
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                // It's a sampler
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                // No count
-                count: None,
-            },
-        ],
-    });
-    // Now we'll create our pipeline layout, specifying the shape of the execution environment (the bind group)
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[&texture_bind_group_layout],
-        push_constant_ranges: &[],
     });
 
     let sprite_bind_group_layout =
@@ -224,19 +137,110 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             },
         ],
     });
+
+    let texture_bind_group_layout =
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        // This bind group's first entry is for the texture and the second is for the sampler.
+        entries: &[
+            // The texture binding
+            wgpu::BindGroupLayoutEntry {
+                // This matches the binding number in the shader
+                binding: 0,
+                // Only available in the fragment shader
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                // It's a texture binding
+                ty: wgpu::BindingType::Texture {
+                    // We can use it with float samplers
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    // It's being used as a 2D texture
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    // This is not a multisampled texture
+                    multisampled: false,
+                },
+                // This is not an array texture, so it has None for count
+                count: None,
+            },
+            // The sampler binding
+            wgpu::BindGroupLayoutEntry {
+                // This matches the binding number in the shader
+                binding: 1,
+                // Only available in the fragment shader
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                // It's a sampler
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                // No count
+                count: None,
+            },
+        ],
+    });
+
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
         bind_group_layouts: &[&sprite_bind_group_layout, &texture_bind_group_layout],
         push_constant_ranges: &[],
     });
 
-    let camera = GPUCamera {
-        screen_pos: [0.0, 0.0],
-        // Consider using config.width and config.height instead,
-        // it's up to you whether you want the window size to change what's visible in the game
-        // or scale it up and down
-        screen_size: [1024.0, 768.0],
+// The swapchain is how we obtain images from the surface we're drawing onto.
+    // This is so we can draw onto one image while a different one is being presented
+    // to the user on-screen.
+    let swapchain_capabilities = surface.get_capabilities(&adapter);
+    let swapchain_format = swapchain_capabilities.formats[0];
+
+    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            targets: &[Some(swapchain_format.into())],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+
+    // Our surface config lets us set up our surface for drawing with the device
+    // we're actually using.  It's mutable in case the window's size changes later on.
+    let mut config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: swapchain_format,
+        width: size.width,
+        height: size.height,
+        present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode: swapchain_capabilities.alpha_modes[0],
+        view_formats: vec![],
     };
+
+    surface.configure(&device, &config);
+
+    // textures!
+    let tex_sprite_sheet = load_texture("content/king.png", Some("sprite sheet"), &device, &queue).expect("Couldn't load sprite sheet");
+    let view = tex_sprite_sheet.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+
+    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &texture_bind_group_layout,
+        entries: &[
+            // One for the texture, one for the sampler
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
 
     let camera = GPUCamera {
         screen_pos: [0.0, 0.0],
@@ -295,70 +299,23 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         ],
     });
 
-
-
-    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &texture_bind_group_layout,
-        entries: &[
-            // One for the texture, one for the sampler
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
-    });
-
-    // Our specific "function" is going to be a draw call using our shaders. That's what we
-    // set up here, calling the result a render pipeline.  It's not only what shaders to use,
-    // but also how to interpret streams of vertices (e.g. as separate triangles or as a list of lines),
-    // whether to draw both the fronts and backs of triangles, and how many times to run the pipeline for
-    // things like multisampling antialiasing.
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: "vs_main",
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: "fs_main",
-            targets: &[Some(swapchain_format.into())],
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-    });
-
-
-
     let mut input = input::Input::default();
-    let mut color = image::Rgba([255,0,0,255]);
-    let mut brush_size = 10_i32;
-    let (sprite_sheet_w, sprite_sheet_h) = sprite_sheet.dimensions();
+    //let mut color = image::Rgba([255,0,0,255]);
+    //let mut brush_size = 10_i32;
+    //let (sprite_sheet_w, sprite_sheet_h) = sprite_sheet.dimensions();
 
-    let mut img_data = sprite_sheet.as_flat_samples_mut();
-    let mut blend = imageproc::drawing::Blend(
-        img_data.as_view_mut::<image::Rgba<u8>>().unwrap(),);
+    //let mut img_data = sprite_sheet.as_flat_samples_mut();
+    //let mut blend = imageproc::drawing::Blend(
+    //    img_data.as_view_mut::<image::Rgba<u8>>().unwrap(),);
 
-    // Now our setup is all done and we can kick off the windowing event loop.
     // This closure is a "move closure" that claims ownership over variables used within its scope.
     // It is called once per iteration of the event loop.
     event_loop.run(move |event, _, control_flow| {
-        // By default, tell the windowing system that there's no more work to do
-        // from the application's perspective.
+        // THIS LINE IS COPY PASTED FROM GEORGE
+        // i do not know what it does
+        let _ = (&instance, &adapter, &shader, &pipeline_layout);
+        
         *control_flow = ControlFlow::Wait;
-        // Depending on the event, we'll need to do different things.
-        // There is some pretty fancy pattern matching going on here,
-        // so think back to CSCI054.
-
         match event {
             Event::WindowEvent {
                 // For example, "if it's a window event and the specific window event is that
@@ -380,8 +337,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 // Then send the data to the GPU!
                 queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
                 queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
+                
                 // ...all the drawing stuff goes here...
 
+                window.request_redraw();
+                // Leave now_keys alone, but copy over all changed keys
+                input.next_frame();
                 // If the window system is telling us to redraw, let's get our next swapchain image
                 let frame = surface
                 .get_current_texture()
@@ -389,8 +350,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 // And set up a texture view onto it, since the GPU needs a way to interpret those
                 // image bytes for writing.
                 let view = frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
                 // From the queue we obtain a command encoder that lets us issue GPU commands
                 let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -425,9 +386,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     rpass.draw(0..6, 0..(sprites.len() as u32));
                 }
                 
-                window.request_redraw();
-                // Leave now_keys alone, but copy over all changed keys
-                input.next_frame();
+                queue.submit(Some(encoder.finish()));
+                frame.present();
+
                 /* 
                 // (1)
                 // Your turn: Use the number keys 1-3 to change the color...
@@ -661,7 +622,6 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     {
         env_logger::init();
-        // On native, we just want to wait for `run` to finish.
         pollster::block_on(run(event_loop, window));
     }
     #[cfg(target_arch = "wasm32")]
