@@ -332,7 +332,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     event_loop.run(move |event, _, control_flow| {
         // By default, tell the windowing system that there's no more work to do
         // from the application's perspective.
-        *control_flow = ControlFlow::Wait;
+        *control_flow = ControlFlow::Poll;
         // Depending on the event, we'll need to do different things.
         // There is some pretty fancy pattern matching going on here,
         // so think back to CSCI054.
@@ -354,13 +354,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             }
             Event::RedrawRequested(_) => {
                 // TODO: move sprites, maybe scroll camera
-                if input.is_key_down(winit::event::VirtualKeyCode::Left) {
-                    sprites[0].screen_region[0] -= 1.0;
-                }
+                // if input.is_key_down(winit::event::VirtualKeyCode::Left) {
+                //     sprites[0].screen_region[0] -= 1.0;
+                // }
 
-                if input.is_key_down(winit::event::VirtualKeyCode::Right) {
-                    sprites[0].screen_region[0] += 1.0;
-                }
+                // if input.is_key_down(winit::event::VirtualKeyCode::Right) {
+                //     sprites[0].screen_region[0] += 1.0;
+                // }
 
 
 
@@ -444,6 +444,20 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 ..
             } => {
                 input.handle_mouse_move(position);
+            }
+            Event::MainEventsCleared => {
+
+                if input.is_key_down(winit::event::VirtualKeyCode::Left) {
+                    sprites[0].screen_region[0] -= 1.0;
+                    window.request_redraw();
+                }
+
+                if input.is_key_down(winit::event::VirtualKeyCode::Right) {
+                    sprites[0].screen_region[0] += 1.0;
+                    window.request_redraw();
+
+                }
+
             }
             _ => {}
         }
