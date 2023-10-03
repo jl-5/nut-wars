@@ -355,7 +355,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::RedrawRequested(_) => {
                 // TODO: move sprites, maybe scroll camera
 
-                let mut step = 0;
+                // let mut step = 0;
 
                 if input.is_key_down(winit::event::VirtualKeyCode::Left) {
                     sprites[0].screen_region[0] -= 2.0;
