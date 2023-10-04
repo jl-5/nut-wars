@@ -22,7 +22,6 @@ impl Animation {
                 self.state_number = 0;
             }
             self.frame_counter = 0;
-            println!("NEW FRAME!");
         }
     }
 
