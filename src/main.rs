@@ -81,11 +81,18 @@ impl Character {
     fn face_left(&mut self) {
         self.facing_right = false;
         // TODO: FLIP SPRITE
+        if self.screen_region[2] < 0.0 {
+            self.screen_region[2] *= -1.0;
+        }
+        
     }
 
     fn face_right(&mut self) {
         self.facing_right = true;
         // TODO: FLIP SPRITE
+        if self.screen_region[2] > 0.0 {
+            self.screen_region[2] *= -1.0;
+        }
     }
 }
 
