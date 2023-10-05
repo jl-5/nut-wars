@@ -1,4 +1,6 @@
 use std::{borrow::Cow, f32::consts::E};
+use animation::Animation;
+use wgpu::Texture;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -7,6 +9,7 @@ use winit::{
 use imageproc::rect::Rect;
 use rusttype::{Font, Scale};
 mod input;
+mod animation;
 
 // AsRef means we can take as parameters anything that cheaply converts into a Path,
 // for example an &str.
@@ -45,6 +48,54 @@ fn load_texture(
         size,
     );
     Ok((texture,img))
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+struct GPUSprite {
+    screen_region: [f32;4],
+    // Textures with a bunch of sprites are often called "sprite sheets"
+    sheet_region: [f32;4]
+}
+
+pub struct Character {
+    screen_region: [f32; 4],
+    animation: Animation,
+    speed: f32,
+    facing_right: bool,
+    sprites_index: usize,
+}
+
+impl Character {
+
+    fn walk(&mut self){
+        if self.facing_right {
+            self.screen_region[0] += self.speed;
+        }
+        // if facing left
+        else {
+            self.screen_region[0] -= self.speed;
+        }
+    }
+
+    fn face_left(&mut self) {
+        self.facing_right = false;
+        // TODO: FLIP SPRITE
+        if self.screen_region[2] < 0.0 {
+            self.screen_region[2] *= -1.0;
+            self.screen_region[0] -= 250.0;
+        }
+        
+    }
+
+    fn face_right(&mut self) {
+        self.facing_right = true;
+        // TODO: FLIP SPRITE
+        if self.screen_region[2] > 0.0 {
+            self.screen_region[2] *= -1.0;
+            self.screen_region[0] += 250.0;
+        }
+    }
 }
 
 // In WGPU, we define an async function whose operation can be suspended and resumed.
@@ -97,9 +148,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     .await
     .expect("Failed to create device");
 
-    let (tex_47, mut img_47) = load_texture("content/king.png", Some("47 image"), &device, &queue).expect("Couldn't load 47 img");
-    let view_47 = tex_47.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler_47 = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let (squirrel_tex, mut squirrel_img) = load_texture("content/squirrel.png", Some("squirrel"), &device, &queue).expect("Couldn't load squirrel sprite sheet");
+    let view: wgpu::TextureView = squirrel_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
     // The swapchain is how we obtain images from the surface we're drawing onto.
     // This is so we can draw onto one image while a different one is being presented
     // to the user on-screen.
@@ -217,11 +268,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             // One for the texture, one for the sampler
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view_47),
+                resource: wgpu::BindingResource::TextureView(&view),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler_47),
+                resource: wgpu::BindingResource::Sampler(&sampler),
             },
         ],
     });
@@ -251,17 +302,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     });
 
     let mut input = input::Input::default();
-    let mut color = image::Rgba([255,0,0,255]);
-    let mut brush_size = 10_i32;
-    let (img_47_w, img_47_h) = img_47.dimensions();
+    //let mut color = image::Rgba([255,0,0,255]);
+    //let mut brush_size = 10_i32;
+    //let (squirrel_w, squirrel_h) = squirrel_img.dimensions();
 
-    #[repr(C)]
-    #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
-    struct GPUSprite {
-        screen_region: [f32;4],
-        // Textures with a bunch of sprites are often called "sprite sheets"
-        sheet_region: [f32;4]
-    }
+
     #[repr(C)]
     #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
     struct GPUCamera {
@@ -275,20 +320,56 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         // or scale it up and down
         screen_size: [1024.0, 768.0],
     };
-    let mut sprites = vec![
+
+
+    // total squirrel is 52x260px with 5 frames
+    // one frame of squirrel is 52x52px
+    let squirrel_total_w: f32 = 52.0;
+    let squirrel_total_h: f32 = 260.0;
+    let squirrel_frame_w: f32 = 52.0;
+    let squirrel_frame_h: f32 = 52.0;
+
+    // frames will be a series of frames 
+    let mut squirrel_sheet_positions: Vec<[f32; 4]> = vec![
+        // frame 1 sheet position
+        [0.0, (1.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+
+        // frame 2 sheet position
+        [0.0, (2.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+
+        // frame 3 sheet position
+        [0.0, (3.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+
+        // frame 4 sheet position
+        [0.0, (4.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+
+        // frame 5 sheet position
+        [0.0, (5.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+
+    ];
+
+    let mut sprites: Vec<GPUSprite> = vec![
         // SQUIRREL
     GPUSprite {
-        screen_region: [32.0, 32.0, 64.0, 64.0],
-        sheet_region: [0.0, 16.0/32.0, 16.0/32.0, 16.0/32.0],
+        screen_region: [32.0, 32.0, 208.0, 208.0],
+        sheet_region: squirrel_sheet_positions[0],   
     }
     ];
 
-    // frames will be a series of frames 
-    let mut squirrel_sheet_positions = vec![
-        [[0.0, 0.5, 0.5, 0.5]],
-        // TODO: populate this with the sprite sheet positions for the squirrel frames
+    let squirrel_animation: Animation = Animation {
+        states: squirrel_sheet_positions,
+        frame_counter: 0,
+        rate: 7,
+        state_number: 0,
+    };
 
-    ];
+    let mut squirrel: Character = Character {
+        screen_region: sprites[0].screen_region,
+        animation: squirrel_animation,
+        speed: 2.0,
+        facing_right: true,
+        sprites_index: 0,
+    };
 
     let buffer_camera = device.create_buffer(&wgpu::BufferDescriptor{
         label: None,
@@ -442,48 +523,31 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::MainEventsCleared => {
 
                 if input.is_key_down(winit::event::VirtualKeyCode::Left) {
-                    sprites[0].screen_region[0] -= 2.0;
 
-                    if sprites[0].sheet_region[0] == (16.0/32.0) {
-                        sprites[0].sheet_region[0]= (0.0);
-                    }
-                    else if sprites[0].sheet_region[0] == (0.0) {
-                        sprites[0].sheet_region[0]= (16.0/32.0);
-                    }
-                    window.request_redraw();
+                    squirrel.face_left();
+
+                    // move the squirrel
+                    squirrel.walk();
+
+                    squirrel.animation.tick();
+                    
+                }
+               
+                else if input.is_key_down(winit::event::VirtualKeyCode::Right) {
+
+                    squirrel.face_right();
+
+                    // move the squirrel
+                    squirrel.walk();
+
+                    squirrel.animation.tick();
 
                 }
 
-                // if input.is_key_down(winit::event::VirtualKeyCode::Right) {
-                //     sprites[0].screen_region[0] += 1.0;
-                // }
+                sprites[squirrel.sprites_index].sheet_region = squirrel.animation.get_current_state();
+                sprites[squirrel.sprites_index].screen_region = squirrel.screen_region;
 
-
-                if input.is_key_down(winit::event::VirtualKeyCode::Right) {
-                    sprites[0].screen_region[0] += 2.0;
-
-                    if sprites[0].sheet_region[0] == (16.0/32.0) {
-                        sprites[0].sheet_region[0]= (0.0);
-                    }
-                    else if sprites[0].sheet_region[0] == (0.0) {
-                        sprites[0].sheet_region[0]= (16.0/32.0);
-                    }
-                    // if step==2 {
-                    //     if sprites[0].sheet_region[0] == (16.0/32.0) {
-                    //         sprites[0].sheet_region[0]= (0.0);
-                    //     }
-                    //     else if sprites[0].sheet_region[0] == (0.0) {
-                    //         sprites[0].sheet_region[0]= (16.0/32.0);
-                    //     }
-                    //     step=0;
-                    // }
-                    // else if (step==1) | (step==0) {
-                    //     step+=1;
-                    // }
-                    window.request_redraw();
-
-                }
-
+                window.request_redraw();
             }
             _ => {}
         }
@@ -495,6 +559,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 fn main() {
     let event_loop = EventLoop::new();
     let window = winit::window::Window::new(&event_loop).unwrap();
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         env_logger::init();
