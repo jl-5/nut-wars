@@ -1,4 +1,4 @@
-use std::{borrow::Cow, f32::consts::E};
+use std::{borrow::Cow, f32::consts::E, arch::aarch64::float32x2_t};
 use animation::Animation;
 use wgpu::Texture;
 use winit::{
@@ -10,6 +10,8 @@ use imageproc::rect::Rect;
 use rusttype::{Font, Scale};
 mod input;
 mod animation;
+
+use rand::Rng; // 0.8.5
 
 // AsRef means we can take as parameters anything that cheaply converts into a Path,
 // for example an &str.
@@ -96,6 +98,20 @@ impl Character {
             self.screen_region[0] += 250.0;
         }
     }
+
+    fn move_down(&mut self) {
+        self.screen_region[1] -= self.speed;
+
+        if self.screen_region[1] <= 0.0 {
+            self.screen_region[1] = 768.0;
+            self.screen_region[0] = rand::thread_rng().gen_range(0..1025) as f32;
+        }
+    }
+
+    fn reset_y(&mut self){
+        self.screen_region[1] = 768.0;
+        self.screen_region[0] = rand::thread_rng().gen_range(0..1025) as f32;
+    }
 }
 
 // In WGPU, we define an async function whose operation can be suspended and resumed.
@@ -148,7 +164,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     .await
     .expect("Failed to create device");
 
-    let (squirrel_tex, mut squirrel_img) = load_texture("content/squirrel.png", Some("squirrel"), &device, &queue).expect("Couldn't load squirrel sprite sheet");
+    let (squirrel_tex, mut squirrel_img) = load_texture("content/spritesheet.png", Some("squirrel"), &device, &queue).expect("Couldn't load squirrel sprite sheet");
     let view: wgpu::TextureView = squirrel_tex.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
     // The swapchain is how we obtain images from the surface we're drawing onto.
@@ -324,6 +340,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     // total squirrel is 52x260px with 5 frames
     // one frame of squirrel is 52x52px
+    let sprite_sheet_dimensions = squirrel_img.dimensions();
     let squirrel_total_w: f32 = 52.0;
     let squirrel_total_h: f32 = 260.0;
     let squirrel_frame_w: f32 = 52.0;
@@ -332,19 +349,19 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     // frames will be a series of frames 
     let mut squirrel_sheet_positions: Vec<[f32; 4]> = vec![
         // frame 1 sheet position
-        [0.0, (1.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+        [259.0/sprite_sheet_dimensions.0 as f32, (1.0 * squirrel_frame_h)/squirrel_total_h, 1.0 - 259.0/sprite_sheet_dimensions.0 as f32, squirrel_frame_h/squirrel_total_h],
 
         // frame 2 sheet position
-        [0.0, (2.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
-
+        [259.0/sprite_sheet_dimensions.0 as f32, (2.0 * squirrel_frame_h)/squirrel_total_h, 1.0 - 259.0/sprite_sheet_dimensions.0 as f32, squirrel_frame_h/squirrel_total_h],
+ 
         // frame 3 sheet position
-        [0.0, (3.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+        [259.0/sprite_sheet_dimensions.0 as f32, (3.0 * squirrel_frame_h)/squirrel_total_h, 1.0 - 259.0/sprite_sheet_dimensions.0 as f32, squirrel_frame_h/squirrel_total_h],
 
         // frame 4 sheet position
-        [0.0, (4.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+        [259.0/sprite_sheet_dimensions.0 as f32, (4.0 * squirrel_frame_h)/squirrel_total_h, 1.0 - 259.0/sprite_sheet_dimensions.0 as f32, squirrel_frame_h/squirrel_total_h],
 
         // frame 5 sheet position
-        [0.0, (5.0 * squirrel_frame_h)/squirrel_total_h, 1.0, squirrel_frame_h/squirrel_total_h],
+        [259.0/sprite_sheet_dimensions.0 as f32, (5.0 * squirrel_frame_h)/squirrel_total_h, 1.0 - 259.0/sprite_sheet_dimensions.0 as f32, squirrel_frame_h/squirrel_total_h],
 
     ];
 
@@ -353,11 +370,24 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     GPUSprite {
         screen_region: [32.0, 32.0, 208.0, 208.0],
         sheet_region: squirrel_sheet_positions[0],   
+    },
+
+        // NUT
+    GPUSprite {
+        screen_region: [32.0, 200.0, 84.73, 84.73],
+        sheet_region: [0.0, 0.0, 258.0/sprite_sheet_dimensions.0 as f32, 1.0],   
     }
     ];
 
     let squirrel_animation: Animation = Animation {
         states: squirrel_sheet_positions,
+        frame_counter: 0,
+        rate: 7,
+        state_number: 0,
+    };
+
+    let acorn_animation: Animation = Animation {
+        states: [sprites[1].sheet_region].to_vec(),
         frame_counter: 0,
         rate: 7,
         state_number: 0,
@@ -369,6 +399,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         speed: 2.0,
         facing_right: true,
         sprites_index: 0,
+    };
+
+    let mut acorn: Character = Character {
+        screen_region: sprites[1].screen_region,
+        animation: acorn_animation,
+        speed: 2.0,
+        facing_right: true,
+        sprites_index: 1,
     };
 
     let buffer_camera = device.create_buffer(&wgpu::BufferDescriptor{
@@ -522,6 +560,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             }
             Event::MainEventsCleared => {
 
+                acorn.move_down();
+
                 if input.is_key_down(winit::event::VirtualKeyCode::Left) {
 
                     squirrel.face_left();
@@ -546,6 +586,26 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                 sprites[squirrel.sprites_index].sheet_region = squirrel.animation.get_current_state();
                 sprites[squirrel.sprites_index].screen_region = squirrel.screen_region;
+
+                sprites[acorn.sprites_index].screen_region = acorn.screen_region;
+
+                let acorn_width: f32 = sprites[acorn.sprites_index].screen_region[2];
+                let squirrel_width: f32 = sprites[squirrel.sprites_index].screen_region[2];
+                let squirrel_x: f32 = sprites[squirrel.sprites_index].screen_region[0];
+                let squirrel_y: f32 = sprites[squirrel.sprites_index].screen_region[1];
+                let acorn_x: f32 = sprites[acorn.sprites_index].screen_region[0];
+                let acorn_y: f32 = sprites[acorn.sprites_index].screen_region[1];
+                let acorn_height: f32 = sprites[acorn.sprites_index].screen_region[3];
+                let squirrel_height: f32 = sprites[squirrel.sprites_index].screen_region[3];
+                // check for collisions
+                if ((acorn_x + acorn_width > squirrel_x) && (acorn_x < squirrel_x + squirrel_width)) 
+                &&  ((acorn_y - acorn_height < squirrel_y) && (acorn_y > squirrel_y - squirrel_height)) {
+                    println!("WE HIT!\n");
+                    acorn.speed += 0.2;
+                    acorn.reset_y();
+                }
+
+
 
                 window.request_redraw();
             }
