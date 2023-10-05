@@ -83,6 +83,7 @@ impl Character {
         // TODO: FLIP SPRITE
         if self.screen_region[2] < 0.0 {
             self.screen_region[2] *= -1.0;
+            self.screen_region[0] -= 250.0;
         }
         
     }
@@ -92,6 +93,7 @@ impl Character {
         // TODO: FLIP SPRITE
         if self.screen_region[2] > 0.0 {
             self.screen_region[2] *= -1.0;
+            self.screen_region[0] += 250.0;
         }
     }
 }
@@ -529,20 +531,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                     squirrel.animation.tick();
                     
-                    /*
-                    if sprites[0].sheet_region[0] == (16.0/32.0) {
-                        sprites[0].sheet_region[0]= (0.0);
-                    }
-                    else if sprites[0].sheet_region[0] == (0.0) {
-                        sprites[0].sheet_region[0]= (16.0/32.0);
-                    } */
                 }
-
-                // if input.is_key_down(winit::event::VirtualKeyCode::Right) {
-                //     sprites[0].screen_region[0] += 1.0;
-                // }
-
-                
+               
                 if input.is_key_down(winit::event::VirtualKeyCode::Right) {
 
                     squirrel.face_right();
@@ -551,29 +541,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     squirrel.walk();
 
                     squirrel.animation.tick();
-
-
-
-                    /* 
-                    if sprites[0].sheet_region[0] == (16.0/32.0) {
-                        sprites[0].sheet_region[0]= (0.0);
-                    }
-                    else if sprites[0].sheet_region[0] == (0.0) {
-                        sprites[0].sheet_region[0]= (16.0/32.0);
-                    }*/
-
-                    // if step==2 {
-                    //     if sprites[0].sheet_region[0] == (16.0/32.0) {
-                    //         sprites[0].sheet_region[0]= (0.0);
-                    //     }
-                    //     else if sprites[0].sheet_region[0] == (0.0) {
-                    //         sprites[0].sheet_region[0]= (16.0/32.0);
-                    //     }
-                    //     step=0;
-                    // }
-                    // else if (step==1) | (step==0) {
-                    //     step+=1;
-                    // }
 
                 }
 
