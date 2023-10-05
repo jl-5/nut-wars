@@ -1,4 +1,7 @@
-use std::{borrow::Cow, f32::consts::E, arch::aarch64::float32x2_t};
+use std::{borrow::Cow, f32::consts::E};
+
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::float32x2_t;
 use animation::Animation;
 use wgpu::Texture;
 use winit::{
