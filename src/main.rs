@@ -533,7 +533,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     
                 }
                
-                if input.is_key_down(winit::event::VirtualKeyCode::Right) {
+                else if input.is_key_down(winit::event::VirtualKeyCode::Right) {
 
                     squirrel.face_right();
 
