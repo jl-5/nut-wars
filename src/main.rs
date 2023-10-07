@@ -585,10 +585,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     squirrel.animation.tick();
 
                 }
-                else if input.is_key_up(winit::event::VirtualKeyCode::Left) {
-                    squirrel.animation.stop();
-                }
-                else if input.is_key_up(winit::event::VirtualKeyCode::Right) {
+                else if input.is_key_up(winit::event::VirtualKeyCode::Left)  || input.is_key_up(winit::event::VirtualKeyCode::Right){
                     squirrel.animation.stop();
                 }
 
