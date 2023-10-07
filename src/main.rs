@@ -575,7 +575,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     squirrel.animation.tick();
                     
                 }
-               
                 else if input.is_key_down(winit::event::VirtualKeyCode::Right) {
 
                     squirrel.face_right();
@@ -585,6 +584,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                     squirrel.animation.tick();
 
+                }
+                else if input.is_key_up(winit::event::VirtualKeyCode::Left) {
+                    squirrel.animation.stop();
+                }
+                else if input.is_key_up(winit::event::VirtualKeyCode::Right) {
+                    squirrel.animation.stop();
                 }
 
                 sprites[squirrel.sprites_index].sheet_region = squirrel.animation.get_current_state();

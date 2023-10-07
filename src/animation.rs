@@ -24,7 +24,11 @@ impl Animation {
             self.frame_counter = 0;
         }
     }
-
+    pub fn stop(&mut self){
+        while self.state_number != 0 {
+            self.tick();
+        }
+    }
     pub fn get_current_state(&mut self) -> [f32; 4]{
         return self.states[self.state_number]
     }
