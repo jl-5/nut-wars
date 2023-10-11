@@ -9,12 +9,12 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
+use std::path::Path;
 use imageproc::rect::Rect;
 use rusttype::{Font, Scale};
 mod input;
 mod animation;
-
-use rand::Rng; // 0.8.5
+use rand::Rng;
 
 // AsRef means we can take as parameters anything that cheaply converts into a Path,
 // for example an &str.
@@ -26,6 +26,7 @@ fn load_texture(
 ) -> Result<(wgpu::Texture, image::RgbaImage), image::ImageError> {
     // This ? operator will return the error if there is one, unwrapping the result otherwise.
     let img = image::open(path.as_ref())?.to_rgba8();
+
     let (width, height) = img.dimensions();
     let size = wgpu::Extent3d {
         width,
@@ -62,7 +63,6 @@ struct GPUSprite {
     // Textures with a bunch of sprites are often called "sprite sheets"
     sheet_region: [f32;4]
 }
-
 pub struct Character {
     screen_region: [f32; 4],
     animation: Animation,
@@ -167,9 +167,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     .await
     .expect("Failed to create device");
 
-    let (squirrel_tex, mut squirrel_img) = load_texture("content/spritesheet.png", Some("squirrel"), &device, &queue).expect("Couldn't load squirrel sprite sheet");
+    let (squirrel_tex, mut squirrel_img) = load_texture("content/spritesheet.png", Some("squirrel"), &device, &queue ).expect("Couldn't load squirrel sprite sheet");
     let view: wgpu::TextureView = squirrel_tex.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+
+    let (tex_bg, mut img_bg) = load_texture("content/forest_background.png", Some("background"), &device, &queue ).expect("Couldn't load background");
+    let view_bg = tex_bg.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler_bg = device.create_sampler(&wgpu::SamplerDescriptor::default());
+
     // The swapchain is how we obtain images from the surface we're drawing onto.
     // This is so we can draw onto one image while a different one is being presented
     // to the user on-screen.
@@ -280,6 +285,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         push_constant_ranges: &[],
     });
 
+    let pipeline_layout_bg = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&texture_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
     let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &texture_bind_group_layout,
@@ -292,6 +303,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
+
+    let tex_bg_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &texture_bind_group_layout,
+        entries: &[
+            // One for the texture, one for the sampler
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view_bg),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler_bg),
             },
         ],
     });
@@ -320,11 +347,30 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         multiview: None,
     });
 
-    let mut input = input::Input::default();
-    //let mut color = image::Rgba([255,0,0,255]);
-    //let mut brush_size = 10_i32;
-    //let (squirrel_w, squirrel_h) = squirrel_img.dimensions();
+    let render_pipeline_bg = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout_bg),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: "vs_main_bg",
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: "fs_main_bg",
+            targets: &[Some(swapchain_format.into())],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
 
+    let mut input = input::Input::default();
+    let mut nut_count = 0;
+    let mut color = image::Rgba([255,0,0,255]);
+    let mut brush_size = 10_i32;
+    let (img_bg_w, img_bg_h) = img_bg.dimensions();
 
     #[repr(C)]
     #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
@@ -339,7 +385,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         // or scale it up and down
         screen_size: [1024.0, 768.0],
     };
-
 
     // total squirrel is 52x260px with 5 frames
     // one frame of squirrel is 52x52px
@@ -443,7 +488,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         ],
     });
 
-
     // Now our setup is all done and we can kick off the windowing event loop.
     // This closure is a "move closure" that claims ownership over variables used within its scope.
     // It is called once per iteration of the event loop.
@@ -472,12 +516,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             }
             Event::RedrawRequested(_) => {
                 // TODO: move sprites, maybe scroll camera
-                // if input.is_key_down(winit::event::VirtualKeyCode::Left) {
-                //     sprites[0].screen_region[0] -= 1.0;
-                // }
-
-                // let mut step = 0;
-
                 
 
                 // Then send the data to the GPU!
@@ -501,28 +539,39 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
                 {
+                    
+                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                // When loading this texture for writing, the GPU should clear
+                                // out all pixels to a lovely green color
+                                load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+                                // The results of drawing should always be stored to persistent memory
+                                store: true,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                    });
+                    rpass.set_pipeline(&render_pipeline_bg);
+                    // Attach the bind group for group 0
+                    rpass.set_bind_group(0, &tex_bg_bind_group, &[]);
+                    // Now draw two triangles!
+                    rpass.draw(0..6, 0..2);
+
                     // Now we begin a render pass.  The descriptor tells WGPU that
                     // we want to draw onto our swapchain texture view (that's where the colors will go)
                     // and that there's no depth buffer or stencil buffer.
-                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: true,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                });
+
                     rpass.set_pipeline(&render_pipeline);
                     rpass.set_bind_group(0, &sprite_bind_group, &[]);
                     rpass.set_bind_group(1, &texture_bind_group, &[]);
-                    // draw two triangles per sprite, and sprites-many sprites.
-                    // this uses instanced drawing, but it would also be okay
-                    // to draw 6 * sprites.len() vertices and use modular arithmetic
-                    // to figure out which sprite we're drawing, instead of the instance index.
+                    // // draw two triangles per sprite, and sprites-many sprites.
+                    // // this uses instanced drawing, but it would also be okay
+                    // // to draw 6 * sprites.len() vertices and use modular arithmetic
+                    // // to figure out which sprite we're drawing, instead of the instance index.
                     rpass.draw(0..6, 0..(sprites.len() as u32));
             }
 
@@ -605,6 +654,47 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 // check for collisions
                 if ((acorn_x + acorn_width > squirrel_x) && (acorn_x < squirrel_x + squirrel_width)) 
                 &&  ((acorn_y - acorn_height < squirrel_y) && (acorn_y > squirrel_y - squirrel_height)) {
+                    nut_count +=1;
+
+
+                    let mouse_pos = input.mouse_pos();
+                    let (mouse_x_norm, mouse_y_norm) = ((mouse_pos.x / config.width as f64),
+                                                        (mouse_pos.y / config.height as f64));
+                    // Load a font.
+                    let font = Vec::from(include_bytes!("../src/ac-thermes.ttf") as &[u8]);
+                    // /Users/Aniku/cs181g/5-interactive-drawing/src/ac-thermes.ttf
+                    let font = Font::try_from_vec(font).unwrap();
+
+                    let font_size = 40.0;
+                    let scale = Scale {
+                        x: 50.0,
+                        y: 50.0,
+                    };
+                    imageproc::drawing::draw_text_mut(
+                            &mut img_bg,
+                            color,
+                            (mouse_x_norm * (img_bg_w as f64)) as i32, 
+                            (mouse_y_norm * (img_bg_h as f64)) as i32, 
+                            scale, 
+                            &font, 
+                            &"WE HIT!"
+                            );
+                    queue.write_texture(
+                        tex_bg.as_image_copy(),
+                        &img_bg,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(4 * img_bg_w),
+                            rows_per_image: Some(img_bg_h),
+                        },
+                        wgpu::Extent3d {
+                            width:img_bg_w,
+                            height:img_bg_h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+
+
                     println!("WE HIT!\n");
                     acorn.speed += 0.2;
                     acorn.reset_y();
