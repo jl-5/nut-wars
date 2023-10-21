@@ -9,7 +9,9 @@ env_logger = "0.10"
 image = "0.24.7"
 log = "0.4"
 pollster = "0.3.0"
-wgpu = "0.17"
+wgpu = "0.17.1"
+# Our graphics API
+glyphon = {git="https://github.com/grovesNL/glyphon.git",rev="1de354c05da2414afdbd5ff0fe2b4104dcf7d414"}
 winit = "0.28"
 imageproc = "0.23"
 rusttype = "0.9.2"
