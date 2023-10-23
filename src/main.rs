@@ -13,6 +13,8 @@ use std::path::Path;
 use imageproc::rect::Rect;
 use rusttype::{Font, Scale};
 mod game_state;
+mod char_action;
+mod gpus;
 mod input;
 mod animation;
 use rand::Rng;
@@ -25,46 +27,6 @@ use wgpu::{
     CompositeAlphaMode, MultisampleState, 
 };
 
-// AsRef means we can take as parameters anything that cheaply converts into a Path,
-// for example an &str.
-fn load_texture(
-    path: impl AsRef<std::path::Path>,
-    label: Option<&str>,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<(wgpu::Texture, image::RgbaImage), image::ImageError> {
-    // This ? operator will return the error if there is one, unwrapping the result otherwise.
-    let img = image::open(path.as_ref())?.to_rgba8();
-
-    let (width, height) = img.dimensions();
-    let size = wgpu::Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-    };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label,
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        texture.as_image_copy(),
-        &img,
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * width),
-            rows_per_image: Some(height),
-        },
-        size,
-    );
-    Ok((texture,img))
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
 struct GPUSprite {
@@ -72,166 +34,41 @@ struct GPUSprite {
     // Textures with a bunch of sprites are often called "sprite sheets"
     sheet_region: [f32;4]
 }
-pub struct Character {
-    screen_region: [f32; 4],
-    animation: Animation,
-    speed: f32,
-    facing_right: bool,
-    sprites_index: usize,
-}
-
-impl Character {
-
-    fn walk(&mut self){
-        if self.facing_right {
-            self.screen_region[0] += self.speed;
-        }
-        // if facing left
-        else {
-            self.screen_region[0] -= self.speed;
-        }
-    }
-    fn face_left(&mut self) {
-        self.facing_right = false;
-        if self.screen_region[2] < 0.0 {
-            self.screen_region[2] *= -1.0;
-            self.screen_region[0] -= 60.0;
-        }
-        
-    }
-    fn face_right(&mut self) {
-        self.facing_right = true;
-        if self.screen_region[2] > 0.0 {
-            self.screen_region[2] *= -1.0;
-            self.screen_region[0] += 60.0;
-        }
-    }
-    fn move_down(&mut self) {
-        self.screen_region[1] -= self.speed;
-
-        if self.screen_region[1] <= 0.0 {
-            self.screen_region[1] = 768.0;
-            self.screen_region[0] = rand::thread_rng().gen_range(0..1025) as f32;
-        }
-    }
-    fn reset_y(&mut self){
-        self.screen_region[1] = 768.0;
-        self.screen_region[0] = rand::thread_rng().gen_range(0..1025) as f32;
-    }
-}
 
 // In WGPU, we define an async function whose operation can be suspended and resumed.
 // This is because on web, we can't take over the main event loop and must leave it to
 // the browser.  On desktop, we'll just be running this function to completion.
 async fn run(event_loop: EventLoop<()>, window: Window) {
-    let size = window.inner_size();
-
+    let mut gpu = gpus::WGPU::new(&window).await;
     let mut gs = game_state::init_game_state();
-    gs.typing = true;
 
-    // An Instance is an instance of the graphics API.  It's the context in which other
-    // WGPU values and operations take place, and there can be only one.
-    // Its implementation of the Default trait automatically selects a driver backend.
-    let instance = wgpu::Instance::default();
-
-    // From the OS window (or web canvas) the graphics API can obtain a surface onto which
-    // we can draw.  This operation is unsafe (it depends on the window not outliving the surface)
-    // and it could fail (if the window can't provide a rendering destination).
-    // The unsafe {} block allows us to call unsafe functions, and the unwrap will abort the program
-    // if the operation fails.
-    let surface = unsafe { instance.create_surface(&window) }.unwrap();
-
-    // Next, we need to get a graphics adapter from the instance---this represents a physical
-    // graphics card (GPU) or compute device.  Here we ask for a GPU that will be able to draw to the
-    // surface we just obtained.
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            // Request an adapter which can render to our surface
-            compatible_surface: Some(&surface),
-        })
-        // This operation can take some time, so we await the result. We can only await like this
-        // in an async function.
-        .await
-        // And it can fail, so we panic with an error message if we can't get a GPU.
-        .expect("Failed to find an appropriate adapter");
-
-    // Create the logical device and command queue.  A logical device is like a connection to a GPU, and
-    // we'll be issuing instructions to the GPU over the command queue.
-    let (device, queue) = adapter
-    .request_device(
-        &wgpu::DeviceDescriptor {
-            label: None,
-            features: wgpu::Features::empty(),
-            // Bump up the limits to require the availability of storage buffers.
-            limits: wgpu::Limits::downlevel_defaults()
-                .using_resolution(adapter.limits()),
-        },
-        None,
-    )
-    .await
-    .expect("Failed to create device");
-
-    let (squirrel_tex, mut squirrel_img) = load_texture("content/spritesheet.png", Some("squirrel"), &device, &queue ).expect("Couldn't load squirrel sprite sheet");
+    let (squirrel_tex, mut squirrel_img) = gpus::WGPU::load_texture("content/spritesheet.png", Some("squirrel"), &gpu.device, &gpu.queue).await.expect("Couldn't load squirrel sprite sheet");
     let view: wgpu::TextureView = squirrel_tex.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor::default());
 
-    let (tex_bg, mut img_bg) = load_texture("content/forest_background.png", Some("background"), &device, &queue ).expect("Couldn't load background");
+    let (tex_bg, mut img_bg) = gpus::WGPU::load_texture("content/forest_background.png", Some("background"), &gpu.device, &gpu.queue ).await.expect("Couldn't load background");
     let view_bg = tex_bg.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler_bg = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let sampler_bg = gpu.device.create_sampler(&wgpu::SamplerDescriptor::default());
 
-    // The swapchain is how we obtain images from the surface we're drawing onto.
-    // This is so we can draw onto one image while a different one is being presented
-    // to the user on-screen.
-    let swapchain_capabilities = surface.get_capabilities(&adapter);
-    // We'll just use the first supported format, we don't have any reason here to use
-    // one format or another.
-    let swapchain_format = swapchain_capabilities.formats[0];
-
-    // Our surface config lets us set up our surface for drawing with the device
-    // we're actually using.  It's mutable in case the window's size changes later on.
-    let mut config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: swapchain_format,
-        width: size.width,
-        height: size.height,
-        // present_mode: wgpu::PresentMode::Fifo,
-        present_mode: wgpu::PresentMode::Fifo,
-        // alpha_mode: swapchain_capabilities.alpha_modes[0],
-        alpha_mode: CompositeAlphaMode::Opaque,
-        view_formats: vec![],
-    };
-    surface.configure(&device, &config);
-
-    //new
-    let mut original_text = "Hello world! 👋\nThis is rendered with 🦅 glyphon 🦁\nThe text below should be partially clipped.\na b c d e f g h i j k l m n o p q r s t u v w x y z";
-    let num_chars = original_text.len() as u32;
-    let mut displayed_text:String = String::from("");
-    // <li>Add/edit a set_text line before the run call, to set the buffer text to be the displayed text, which is currently an empty String.</li>
     // Set up text renderer
     let mut font_system = FontSystem::new();
     let mut cache = SwashCache::new();
-    let mut atlas = TextAtlas::new(&device, &queue, swapchain_format);
-    let mut text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
+    let mut atlas = TextAtlas::new(&gpu.device, &gpu.queue, gpu.config.format);
+    let mut text_renderer = TextRenderer::new(&mut atlas, &gpu.device, MultisampleState::default(), None);
     let mut buffer = Buffer::new(&mut font_system, Metrics::new(60.0, 42.0));
     
-    let physical_width = (size.width as f64 * window.scale_factor()) as f32;
-    let physical_height = (size.height as f64 * window.scale_factor()) as f32;
+    let physical_width = (gpu.config.width as f64 * window.scale_factor()) as f32;
+    let physical_height = (gpu.config.height as f64 * window.scale_factor()) as f32;
     
     buffer.set_size(&mut font_system, physical_width, physical_height);
 
     let score_text = format!("Score: {}", gs.score);
-    // buffer.set_text(&mut font_system, "Hello world! 👋\nThis is rendered with 🦅 glyphon 🦁\nThe text below should be partially clipped.\na b c d e f g h i j k l m n o p q r s t u v w x y z", Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-    // buffer.set_text(&mut font_system, &displayed_text, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-    // buffer.set_text(&mut font_system, &gs.score.to_string(), Attrs::new().family(Family::SansSerif), Shaping::Advanced);
     buffer.set_text(&mut font_system, &score_text, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-    // <li>Create a file called game_state.rs, and add the following code. This will serve as a game state object that we can make calls to, see the variables of, and edit the variables of from any files. Although we could make these variables in the original main function, in more complicated games, it will be beneficial to have a gamestate, and these are some variables regarding text that make sense to go inside this class.</li>
     buffer.shape_until_scroll(&mut font_system);
 
     // Load the shaders from disk.  Remember, shader programs are things we compile for
     // our GPU so that it can compute vertices and colorize fragments.
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         // Cow is a "copy on write" wrapper that abstracts over owned or borrowed memory.
         // Here we just need to use it since wgpu wants "some text" to compile a shader from.
@@ -239,7 +76,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     });
 
     let texture_bind_group_layout =
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
         // This bind group's first entry is for the texture and the second is for the sampler.
         entries: &[
@@ -275,7 +112,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         ],
     });
     let sprite_bind_group_layout =
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
         entries: &[
             // The camera binding
@@ -312,19 +149,19 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             },
         ],
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
         bind_group_layouts: &[&sprite_bind_group_layout, &texture_bind_group_layout],
         push_constant_ranges: &[],
     });
 
-    let pipeline_layout_bg = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout_bg = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
         bind_group_layouts: &[&texture_bind_group_layout],
         push_constant_ranges: &[],
     });
 
-    let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let texture_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &texture_bind_group_layout,
         entries: &[
@@ -340,7 +177,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         ],
     });
 
-    let tex_bg_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let tex_bg_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &texture_bind_group_layout,
         entries: &[
@@ -361,7 +198,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     // but also how to interpret streams of vertices (e.g. as separate triangles or as a list of lines),
     // whether to draw both the fronts and backs of triangles, and how many times to run the pipeline for
     // things like multisampling antialiasing.
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let render_pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None,
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
@@ -372,7 +209,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: "fs_main",
-            targets: &[Some(swapchain_format.into())],
+            targets: &[Some(gpu.config.format.into())],
         }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
@@ -380,7 +217,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         multiview: None,
     });
 
-    let render_pipeline_bg = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let render_pipeline_bg = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None,
         layout: Some(&pipeline_layout_bg),
         vertex: wgpu::VertexState {
@@ -391,7 +228,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: "fs_main_bg",
-            targets: &[Some(swapchain_format.into())],
+            targets: &[Some(gpu.config.format.into())],
         }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
@@ -453,7 +290,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         screen_region: [32.0, 32.0, 100.0, 100.0],
         sheet_region: squirrel_sheet_positions[0],   
     },
-
         // NUT
     GPUSprite {
         screen_region: [20.0, 200.0, 55.0, 55.0],
@@ -475,39 +311,39 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         state_number: 0,
     };
 
-    let mut squirrel: Character = Character {
-        screen_region: sprites[0].screen_region,
-        animation: squirrel_animation,
-        speed: 2.0,
-        facing_right: true,
-        sprites_index: 0,
-    };
+    let mut squirrel = char_action::Char_action::new(
+        sprites[0].screen_region,
+        squirrel_animation,
+        2.0,
+        true,
+        0,
+    );
 
-    let mut acorn: Character = Character {
-        screen_region: sprites[1].screen_region,
-        animation: acorn_animation,
-        speed: 2.0,
-        facing_right: true,
-        sprites_index: 1,
-    };
+    let mut acorn = char_action::Char_action::new(
+        sprites[1].screen_region,
+        acorn_animation,
+        2.0,
+        true,
+        1,
+    );
 
-    let buffer_camera = device.create_buffer(&wgpu::BufferDescriptor{
+    let buffer_camera = gpu.device.create_buffer(&wgpu::BufferDescriptor{
         label: None,
         size: bytemuck::bytes_of(&camera).len() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false
     });
-    let buffer_sprite = device.create_buffer(&wgpu::BufferDescriptor{
+    let buffer_sprite = gpu.device.create_buffer(&wgpu::BufferDescriptor{
         label: None,
         size: bytemuck::cast_slice::<_,u8>(&sprites).len() as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false
     });
 
-    queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
-    queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
+    gpu.queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
+    gpu.queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
 
-    let sprite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let sprite_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &sprite_bind_group_layout,
         entries: &[
@@ -543,9 +379,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 ..
             } => {
                 // Reconfigure the surface with the new size
-                config.width = size.width;
-                config.height = size.height;
-                surface.configure(&device, &config);
+                gpu.resize(size);
                 // On MacOS the window needs to be redrawn manually after resizing
                 window.request_redraw();
             }
@@ -554,37 +388,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 
 
                 // Then send the data to the GPU!
-                queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
-                queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
+                gpu.queue.write_buffer(&buffer_camera, 0, bytemuck::bytes_of(&camera));
+                gpu.queue.write_buffer(&buffer_sprite, 0, bytemuck::cast_slice(&sprites));
                 // ...all the drawing stuff goes here...
                 window.request_redraw();
-
-                // if gs.typing{
-                    // let chars_iter = original_text.chars();
-                    // for char in chars_iter.skip(gs.chars_typed as usize){
-                    //     displayed_text += &char.to_string();
-                    //     break;
-                    // }
-                    // buffer.set_text(&mut font_system, &displayed_text, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-                    // buffer.set_text(&mut font_system, &gs.score.to_string(), Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-                    // ADD TYPING LOGIC
-                    // gs.chars_typed += 1;
-                    // if gs.chars_typed == num_chars{
-                    //     gs.typing = false;
-                    // }
-                // }
 
                 // Leave now_keys alone, but copy over all changed keys
                 input.next_frame();
 
                 text_renderer.prepare(
-                    &device,
-                    &queue,
+                    &gpu.device,
+                    &gpu.queue,
                     &mut font_system,
                     &mut atlas,
                     Resolution {
-                        width: config.width,
-                        height: config.height,
+                        width: gpu.config.width,
+                        height: gpu.config.height,
                     },
                     [TextArea {
                         buffer: &buffer,
@@ -603,7 +422,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 ).unwrap();
 
                 // If the window system is telling us to redraw, let's get our next swapchain image
-                let frame = surface
+                let frame = gpu.surface
                     .get_current_texture()
                     .expect("Failed to acquire next swap chain texture");
                 // And set up a texture view onto it, since the GPU needs a way to interpret those
@@ -613,7 +432,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 // From the queue we obtain a command encoder that lets us issue GPU commands
                 let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
                 {
                     
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -654,7 +473,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             }
 
                 // Once the commands have been scheduled, we send them over to the GPU via the queue.
-                queue.submit(Some(encoder.finish()));
+                gpu.queue.submit(Some(encoder.finish()));
                 // Then we wait for the commands to finish and tell the windowing system to
                 // present the swapchain image.
                 frame.present();
@@ -696,20 +515,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 if input.is_key_down(winit::event::VirtualKeyCode::Left) {
 
                     squirrel.face_left();
-
-                    // move the squirrel
                     squirrel.walk();
-
                     squirrel.animation.tick();
                     
                 }
                 else if input.is_key_down(winit::event::VirtualKeyCode::Right) {
 
                     squirrel.face_right();
-
-                    // move the squirrel
                     squirrel.walk();
-
                     squirrel.animation.tick();
 
                 }
